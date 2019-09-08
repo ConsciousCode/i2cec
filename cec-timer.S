@@ -1,5 +1,10 @@
 #include "common.S"
 
+/**
+ * The TIM0_CMPA interrupt is only used when writing to
+ *  the CEC bus, including an ACK during reading.
+**/
+
 __vector_1:
 __tim0_cmpa:
 	; if(reading)
@@ -20,15 +25,14 @@ __tim0_cmpa:
 	sbrs gbf, LOHI
 	rjmp cec_timer_lo
 	cec_timer_hi:
-		; Make sure CEC is readable
 		FREE CEC
-
 		; if(PIN(CEC)) // bus is free
 		sbic PINB, CEC
 		rjmp cec_bus_taken
 		cec_bus_free:
 			; Transition to LOW
 			cbr gbf, LOHI
+			HOLD CEC
 
 			; Note: In order of expected usage
 
@@ -43,7 +47,6 @@ __tim0_cmpa:
 			brne cec_start_hi
 				; => Await ACK (hold for 0, check for 1)
 				sbr gbf, ACK
-				HOLD CEC
 				; write ACK is a read event, let pcint handle it
 				disable_timer
 				DONE
@@ -57,8 +60,8 @@ __tim0_cmpa:
 				;  just dump the contents of message)
 				ldi state, DATA
 				ldi it_lo, 0
-				ldi nbits, 8
-				rjmp cec_next_bit
+				; Skip bounds checks and load the "next" byte
+				rjmp write_continue
 
 			; else if(state == WAIT)
 			cec_wait_hi:
@@ -66,7 +69,6 @@ __tim0_cmpa:
 			brne done
 				; => Attempt START condition
 				ldi state, START
-				HOLD CEC
 				set_timeout JIFFY_START_LO
 				DONE
 
@@ -83,8 +85,7 @@ __tim0_cmpa:
 		cpi state, START
 		brne cec_other_lo
 		cec_start_lo:
-			clear_timer
-			set_timeout JIFFY_START_HI
+			set_timeout JIFFY_START
 			DONE
 
 		cec_other_lo:
@@ -95,16 +96,14 @@ __tim0_cmpa:
 			DONE
 
 cec_bus_taken:
-	; CEC is INPUT and HIGH
+	; CEC is INPUT and LOW
 
 	ldi state, WAIT
 	set_timeout JIFFY_BIT*3
 	DONE
 
 cec_next_bit:
-	; We'll be going low regardless
-	cbr gbf, LOHI
-	HOLD CEC
+	; assert: LOHI=0, HOLD CEC
 
 	; if(--nbits == 0)
 	dec nbits

@@ -1,8 +1,16 @@
 #include "common.S"
 
-; SCL change
+/**
+ * The INT0 interrupt monitors edges on SCL. Reads occur
+ *  on the rising edge, writes on the falling edge (if
+ *  in the appropriate mode)
+**/
+
 __vector_5:
 __int0:
+	; We can safely ignore the clock if we're idling -
+	;  the START condition doesn't require an SCL edge
+
 	; if(state == IDLE) return;
 	cpi state, IDLE
 	breq done
@@ -23,11 +31,10 @@ __int0:
 		rjmp scl_rise_read
 		scl_rise_write:
 			; if(gbf.ACK)
-			sbrc gbf, ACK
+			sbrs gbf, ACK
 			rjmp done
-				; Clear ACK regardless
 				cbr gbf, 1<<ACK
-
+				; Write+ACK means SDA is free
 				; if(!PIN(SDA))
 				sbis PINB, SDA
 					; Master sent NAK, idle
@@ -43,6 +50,7 @@ __int0:
 			
 			lsl data ; data <<= 1
 			
+			; Read+!ACK means SDA is free
 			; data |= PIN(SDA)
 			sbic PINB, SDA
 			ori data, 1
@@ -50,11 +58,11 @@ __int0:
 			; Finished reading the packet, process it			
 			; if(--dec == 0)
 			dec nbits
-			breq done ; rjmp if dec nbits != 0
-				ldi nbits, 8 ; nbits = 8
+			brne done ; rjmp if dec nbits != 0
+				ldi nbits, 8
 				; if(state == WHO)
 				cpi state, WHO
-				brne i2c_process_data
+				brne i2c_process_cmd
 				i2c_process_who:
 					bst data, 0 ; T = datat&1
 					lsr data ; data >>= 1
@@ -62,22 +70,75 @@ __int0:
 					; if(data == I2C_ADDR)
 					cpi data, I2C_ADDR
 					brne i2c_notme
+					i2c_isme:
 						bld gbf, RW ; gbf.RW = T
-						ldi state, DATA ; state = DATA
+						ldi state, CMD
 						DONE
 					; else
 					i2c_notme:
-						ldi state, IDLE ; state = IDLE
+						; IDLE implicitly ignores the bus
+						;  until the next START condition
+						ldi state, IDLE
 						DONE
-				
+				; else if(state == CMD)
+				i2c_process_cmd:
+				cpi state, CMD
+				brne i2c_process_data
+					mov tmp, data
+					swap tmp
+					andi tmp, 0x0f
+					andi data, 0x0f
+
+					; RW_BUFFER
+					cpi data, RW_BUFFER
+					brne after_rw_buffer
+						; No preparation needed
+						DONE
+
+					; LOAD_TAKEN
+					after_rw_buffer:
+					cpi data, LOAD_TAKEN
+					brne after_load_taken
+						ldi length, 2
+						sts 0x00, taken_hi
+						sts 0x01, taken_lo
+						; Nullary op, ignore anything else
+						ldi state, IDLE
+						DONE
+					
+					; CEC_SEND
+					after_load_taken:
+					cpi data, CEC_SEND
+					brne after_cec_send
+						cbr gbf, I2CEC
+						; Immediately go to wait for arbitration
+						ldi state, WAIT
+						DONE
+					
+					; SET_ADDR (set CEC address)
+					after_cec_send:
+					cpi data, SET_ADDR
+					brne after_set_addr
+						mov cec_addr, tmp
+						ldi state, IDLE
+						DONE
+
+					; Unknown command, ignore it
+					after_set_attr:
+						ldi state, IDLE
+						DONE
+
 				; else
 				i2c_process_data:
 					st it+, data ; *it++ = data
+					inc length
 
-					; if(it >= 16)
-					cpi it_lo, 16
+					; Stop when we would overflow the buffer
+					; if(length >= 16)
+					cpi length, 16
 					brlt done
-						ldi it_lo, 1 ; it = 1
+						ldi state, IDLE
+						DONE
 
 	scl_falling:
 		; On falling edge,
@@ -91,10 +152,10 @@ __int0:
 		rjmp scl_fall_write
 		scl_fall_read:
 			; if(gbf.ACK)
-			sbrc gbf, ACK
+			sbrs gbf, ACK
 			rjmp done
-				FREE SDA
 				cbr gbf, ACK
+				HOLD SDA
 				DONE
 
 		; else
@@ -110,18 +171,20 @@ __int0:
 			; Done with current byte
 			; if(--nbits == 0)
 			dec nbits
-			brne done ; Z = 0, rjmp int0_done if dec nbits != 0
+			brne done
 				ld data, it+ ; data = *it++
-				ldi nbits, 8 ; nbits = 8
+				ldi nbits, 8
 
-				; if(it < 16)
-				cpi it_lo, 16
+				; if(it < length)
+				cp it_lo, length
 				brge i2c_read_overflow
-					HOLD SDA
+					; Send ACK
 					sbr gbf, ACK
+					HOLD SDA
 					DONE
 				
 				; else
 				i2c_read_overflow:
+					; Implicit NAK
 					ldi state, IDLE
 					DONE

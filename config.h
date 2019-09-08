@@ -1,41 +1,38 @@
+/**
+ * End-user configuration
+**/
+
+#include <avr/io.h>
+
+// i2c address, mostly arbitrary
 #define I2C_ADDR 0x71
 
+// Pin assignments
 #define SCL PORTB2
 #define SDA PORTB1
 #define CEC PORTB0
 
-#define READ 1
-#define WRITE 0
-#define LO 1
-#define HI 0
+// Commands
 
+/*
+ * These commands act as the i2c "registers". A read
+ *  session will write whatever is in the message buffer
+ *  (up to 16 bytes) ending after length bytes. Write
+ *  mode takes the lower nibble as the command to
+ *  "execute". The higher nibble is only used for SET_ADDR,
+ *  which sets the CEC address which the device will
+ *  respond to.
+ * 
+ * Only the RW_BUFFER command expects data to follow it.
+ */
+
+#define RW_BUFFER 0 // No special setup, prepare to read/write to the buffer
+#define LOAD_TAKEN 1 // Load taken into the buffer
+#define CEC_SEND 2 // Write the buffer to the CEC bus
+#define SET_ADDR 3 // Set CEC address (for reading from CEC)
+
+// Note: Changing these only changes the calculation of
+//  "jiffies" for timing, it won't affect the actual
+//  timer control flags.
 #define CLOCK_HZ 8000000
 #define CLOCK_DIV 1024
-#define TIMER_HZ (CLOCK_HZ/CLOCK_DIV)
-
-// Times are in microseconds 
-#define JIFFY (1000000/TIMER_HZ)
-#define TIME_1 600
-#define TIME_0 1500
-#define TIME_BIT 4500
-#define TIME_E 150 // Allowed error
-#define TIME_START0 3700 // CEC START low component
-#define TIME_START1 600 // CEC START high component
-
-// Measured in jiffies
-#define JIFFY_BIT (TIME_BIT/JIFFY)
-
-#define JIFFY_1_LO (TIME_1/JIFFY)
-#define JIFFY_1_HI (JIFFY_BIT - JIFFY_1_LO)
-
-#define JIFFY_0_LO (TIME_0/JIFFY)
-#define JIFFY_0_HI (JIFFY_BIT - JIFFY_0_LO)
-
-#define JIFFY_DATA_MID ((JIFFY_1_LO + JIFFY_0_HI)/2)
-
-#define JIFFY_E (TIME_E/JIFFY)
-
-#define JIFFY_START_LO (TIME_START0/JIFFY)
-#define JIFFY_START_HI (TIME_START1/JIFFY)
-#define JIFFY_START_MID ((JIFFY_START_LO + JIFFY_START_HI)/2)
-#define JIFFY_START (JIFFY_START_LO + JIFFY_START_HI)

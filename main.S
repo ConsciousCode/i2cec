@@ -6,7 +6,7 @@ __vectors:
 	rjmp __vector_1 ; INT
 	rjmp __vector_2 ; PCINT
 	reti
-	reti
+	DONE
 	rjmp __vector_5 ; Timer
 
 #include "cec-timer.S"
