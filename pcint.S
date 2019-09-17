@@ -19,6 +19,9 @@ __pcint0:
 	; Set up for determining rising/falling edge
 	in tmp, PINB
 	eor tmp, gbf
+	; Flip the appropriate gbf bits
+	andi tmp, (1<<OLD_CEC)|(1<<OLD_SDA)
+	eor gbf, tmp
 
 	; If we're in idle, listen to either bus
 	ldi state, IDLE
@@ -29,63 +32,74 @@ __pcint0:
 
 	; ...otherwise, only need to pay attention to the bus we're on
 	check_bus:
-	sbrc gbf, I2CEC
-	rjmp check_sda
+		if_set I2CEC, check_sda
 
 	check_cec:
 		; Early exit if it wasn't a change on CEC
 		sbrs tmp, CEC
-		rjmp done
+			DONE
 		
-		; Toggle the bit (no eori?)
-		ldi tmp, 1<<OLD_CEC
-		eor gbf, tmp
-		
-		; if(PIN(CEC))
-		sbis PINB, CEC
-		rjmp cec_falling
+		if_low CEC, cec_falling
 		cec_rising:
 			in tmp, COUNTER
 
 			; if(COUNTER >= START_LO - E)
 			cpi tmp, JIFFY_START_LO - JIFFY_E
-			brlt cec_check_0
+				brge cec_start
+			; else if(COUNTER >= ZERO_LO - E)
+			cpi tmp, JIFFY_0_LO - JIFFY_E
+				brge cec_check_0
+			; else if(COUNTER >= ONE_LO - E)
+			cpi tmp, JIFFY_1_LO - JIFFY_E
+				brge cec_check_1
+			; else
+				DONE
+
 			cec_start:
 				; START
-				cbr gbf, I2CEC
-				ldi state, WHO
-				ldi nbits, 9 ; 8 + EOM
-				DONE
+				clear_flag I2CEC
+				if_unset MONITOR, no_monitor
+					ldi nbits, 8
+					ldi it_lo, 0
+					ldi length, 0
+
+				no_monitor:
+					ldi state, WHO
+					ldi nbits, 8
+					DONE
 			
-			; else if(COUNTER >= ZERO_LO - E)
 			cec_check_0:
-			cpi tmp, JIFFY_0_LO - JIFFY_E
-			brlt cec_check_1
 				clt ; T = 0
 				rjmp cec_bit
 			
-			; else if(COUNTER >= ONE_LO - E)
 			cec_check_1:
-			cpi tmp, JIFFY_1_LO - JIFFY_E
-			brlt done ; else return
 				set ; T = 1
-				; implicit rjmp cec_bit
 			
 			cec_bit:
+			
+			if_state EOM, cec_proc_eom
 
-			; if(--nbits != 0)
-			dec nbits
-			breq cec_process_data
-			cec_still_reading:
-				lsl data ; data <<= 1
-				bld data, 1 ; data |= T
+			rcall push_bit
+			brne done
+
+			; We passed the byte boundary, process it
+
+			sbic gbf, MONITOR
+				rcall push_byte
+
+			cec_process:
+				if_state DATA, cec_proc_data
+				if_state WHO, cec_proc_who
 				DONE
 
-			; else
-			cec_process_data:
-				; if(state == WHO)
-				cpi state, WHO
-				brne cec_proc_data
+				cec_proc_data:
+					rcall push_byte
+					brlt done
+					#ifdef DIRTY_PIN
+						sbi DIRTY_PIN
+					#endif
+						rjmp ignore_rest
+
 				cec_proc_who:
 					; Indicates a POLL message
 					; if(high(data) == low(data))
@@ -99,9 +113,11 @@ __pcint0:
 						cp data, cec_addr
 						brne cec_notme
 						cec_me:
+							; Still need the EOM
+							ldi state, EOM
 							; We own this address, ACK
-							sbr gbf, ACK
-							DONE
+							set_flag ACK
+							rjmp cec_check_monitor
 						
 						; else
 						cec_notme:
@@ -110,19 +126,20 @@ __pcint0:
 							;  implies the inciting device took the address
 							ldi state, IDLE
 
-							;;; {build bit}
-							ldi tmp, 1
-							bst data, 3 ; T = data&0b1000
-							cbr data, 3
-							; Jump immediately to the condition, use
-							;  the Z flag from cbr
-							rjmp build_taken_bit_cond
 							; AVR doesn't have a variable lsl instruction
-							build_taken_bit:
-								lsl tmp ; tmp <<= 1
-								dec data ; while(--data)
-								build_taken_bit_cond:
-								brne build_taken_bit
+							;;; {build bit}
+								ldi tmp, 1
+								; No native 16 bit support, store it in T
+								bst data, 3 ; T = data&0b1000
+								cbr data, 3
+								; Jump immediately to the condition, use
+								;  the Z flag from cbr
+								rjmp build_taken_bit_cond
+								build_taken_bit:
+									lsl tmp ; tmp <<= 1
+									dec data ; while(--data)
+									build_taken_bit_cond:
+									brne build_taken_bit
 							;;; {/build bit}
 
 							brts cec_who_hi
@@ -134,34 +151,26 @@ __pcint0:
 								DONE
 					; else
 					cec_notpoll:
-						; Technically need to read the EOM first
-						ldi state, EOM
-						ldi it_lo, 0
-						ldi length, 0
+						; if(data&0x0f == cec_addr)
+						andi data, 0x0f
+						cp data, cec_addr
+						brne done
+							ldi state, EOM
+							set_flag ACK
+
+							; Monitor mode already set up it
+							if_set MONITOR done
+								ldi it_lo, message + 1
+								ldi length, 1
+								swap tmp
+								sts message, tmp
 						DONE
 				
-				; else if(state == EOM)
 				cec_proc_eom:
-				cpi state, EOM
-				brne cec_proc_data
-					brtc cec_eom_cont
-					cec_eom_done:
-						ldi state, IDLE
-						DONE
+					brts ignore_rest
 					cec_eom_cont:
 						ldi state, DATA
-						DONE
-
-				; else
-				cec_proc_data:
-					st it+, data
-					inc length
-
-					; if(it_lo >= 16)
-					cpi length, 16
-					brlt done
-						; Ignore whatever else is sent
-						ldi state, IDLE
+						set_flag ACK
 						DONE
 
 		; else
@@ -181,30 +190,21 @@ __pcint0:
 	check_sda:
 		; Early exit if it wasn't a change on SDA
 		sbrs tmp, SDA
-		rjmp done
-
-		; Toggle the bit (no eori?)
-		ldi tmp, 1<<OLD_SDA
-		eor gbf, tmp
+			DONE
 
 		; Check for START/STOP condition, which can only
 		;  happen if SDA changes while SCL is high
-		; if(PIN(SCL))
-		sbis PINB, SCL
-		rjmp done
+		if_low SCL, done
 			; if(PIN(SDA))
-			sbis PINB, SDA
-			rjmp sda_falling
-			sda_rising:
-				; STOP
-				ldi state, IDLE
-				DONE
-
+			if_low SDA, ignore_rest ; => STOP
 			sda_falling:
 				; START
-				sbr gbf, I2CEC
-				ldi nbits, 8
-				ldi it_lo, 0
-				ldi length, 0
+			#ifdef DIRTY_PIN
+				cbi DIRTY_PIN
+			#endif
+				set_flag I2CEC
 				ldi state, WHO
+				ldi nbits, 8
+				ldi length, 0
+				ldi it_lo, 0
 				DONE

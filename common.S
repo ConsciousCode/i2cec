@@ -3,7 +3,9 @@
 
 #include "config.h"
 
-#define message 0 // Address of message buffer
+#define PROGSTART 0x4000
+
+#define message (RAMSTART + 0) // Address of message buffer
 
 ; Register assignment
 #define gbf 16 // general bit field
@@ -12,8 +14,8 @@
 #define nbits 19 // # of bits in data
 #define tmp 20 // General-use temporary
 #define length 21 // Length of the message buffer
-#define cec_addr 22 // CEC address, 4 bits
-#define r23
+#define cec_addr 22 // CEC address
+#define cmd 23
 #define r24
 #define r25
 
@@ -23,7 +25,7 @@
 #define it_hi 27
 ; We won't use high(X) ever, but it can't be set either.
 ;  It should always be 0, so best take advantage of it!
-#define __zero_reg__ 27
+#define __zero_reg__ it_hi
 
 ; Use Y register for the taken vector
 #define taken_lo 28 // Y low
@@ -52,8 +54,10 @@
 #define ACK (RW+1) // ACK reverses rw for one bit
 
 ; Bit locations which can be anything
-#define LOHI 4 // lo/hi state of CEC
+#define HILO 4 // hi/lo state of CEC
 #define I2CEC 5 // Which bus we're interacting with
+#define MONITOR 6 // Whether or not we're in "monitor mode"
+#define DEBUG 7 // Debug mode
 
 ;; Renaming weird-sounding SFRs
 #define COUNTER TCNT0L
@@ -134,6 +138,41 @@
 .macro set_timeout tout
 	ldi tmp, tout
 	out TIMEOUT, tmp
+.endm
+
+.macro set_flag flag
+	sbr gbf, 1<<\flag
+.endm
+.macro clear_flag flag
+	cbr gbf, 1<<\flag
+.endm
+
+.macro if_unset flag, dst
+	sbrs gbf, \flag
+	rjmp dst
+.endm
+.macro if_set flag, dst
+	sbrc gbf, \flag
+	rjmp dst
+.endm
+
+.macro if_low pin, dst
+	sbis gbf, \pin
+	rjmp dst
+.endm
+.macro if_high pin, dst
+	sbic gbf, \pin
+	rjmp dst
+.endm
+
+.macro if_state sv, dst
+	cpi state, sv
+	breq dst
+.endm
+
+; No addi, but there IS a subi
+.macro addi a, b
+	subi \a, -\b
 .endm
 
 #endif

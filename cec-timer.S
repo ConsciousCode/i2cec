@@ -8,11 +8,10 @@
 __vector_1:
 __tim0_cmpa:
 	; if(reading)
-	sbrs gbf, RW
-	rjmp cec_timer_write
+	if_unset RW, cec_timer_write
 		; Wrote ACK, don't need to time the high portion
 		FREE CEC
-		cbr gbf, ACK
+		clear_flag ACK
 		disable_timer
 		DONE
 	
@@ -21,52 +20,48 @@ __tim0_cmpa:
 
 	cec_timer_write:
 
-	; if(lohi == HI)
-	sbrs gbf, LOHI
-	rjmp cec_timer_lo
+	; if(HILO == HI)
+	if_unset HILO, cec_timer_lo
 	cec_timer_hi:
 		FREE CEC
-		; if(PIN(CEC)) // bus is free
-		sbic PINB, CEC
-		rjmp cec_bus_taken
+		if_low CEC, cec_bus_taken
 		cec_bus_free:
 			; Transition to LOW
-			cbr gbf, LOHI
+			clear_flag HILO
 			HOLD CEC
 
-			; Note: In order of expected usage
-
-			; if(state == DATA)
-			cec_data_hi:
-			cpi state, DATA
-			brne cec_next_bit
+			; switch(state)
+			if_state DATA, done
+			if_state EOM, cec_eom_hi
+			if_state START, cec_start_hi
+			if_state WAIT, cec_wait_hi
+			DONE
 			
-			; else if(state == EOM)
 			cec_eom_hi:
-			cpi state, EOM
-			brne cec_start_hi
+				ldi state, DATA
+				set_flag ACK
+				mov tmp, length
+				addi tmp, message
+				cp it_lo, tmp
+				brlt bit_0
+				rjmp bit_1
+
 				; => Await ACK (hold for 0, check for 1)
-				sbr gbf, ACK
+				set_flag ACK
 				; write ACK is a read event, let pcint handle it
 				disable_timer
 				DONE
 
-			; else if(state == START)
 			cec_start_hi:
-			cpi state, START
-			brne cec_wait_hi
 				; Start condition received => Data
 				;  (Writing has no concept of addresses,
 				;  just dump the contents of message)
 				ldi state, DATA
 				ldi it_lo, 0
 				; Skip bounds checks and load the "next" byte
-				rjmp write_continue
+				rjmp cec_next_bit
 
-			; else if(state == WAIT)
 			cec_wait_hi:
-			cpi state, WAIT
-			brne done
 				; => Attempt START condition
 				ldi state, START
 				set_timeout JIFFY_START_LO
@@ -75,24 +70,22 @@ __tim0_cmpa:
 	; else
 	cec_timer_lo:
 		; Transition to HIGH
-		sbr gbf, LOHI
+		set_flag HILO
 		FREE CEC
 
 		; Sanity check
-		sbis PINB, CEC
-		rjmp cec_bus_taken
+		if_low CEC, cec_bus_taken
 
-		cpi state, START
-		brne cec_other_lo
-		cec_start_lo:
-			set_timeout JIFFY_START
-			DONE
-
+		if_state START, cec_start_lo
 		cec_other_lo:
 			; We don't actually need to know bit's value,
 			;  just don't reset the timer and go until
 			;  JIFFY_BIT
 			set_timeout JIFFY_BIT
+			DONE
+			
+		cec_start_lo:
+			set_timeout JIFFY_START
 			DONE
 
 cec_bus_taken:
@@ -103,31 +96,24 @@ cec_bus_taken:
 	DONE
 
 cec_next_bit:
-	; assert: LOHI=0, HOLD CEC
+	; assert: HILO=0, HOLD CEC
 
-	; if(--nbits == 0)
-	dec nbits
+	rcall get_next_bit
 	brne normal_bit
+	brge cec_overflow
+
 	write_eom:
 		ldi state, EOM
 
-		; if(it < length)
-		cp it_lo, length
-		brge write_overflow
-		write_continue:
-			; Load the next byte while we're here
-			ld data, X+
-			ldi nbits, 8
-			sto_1: set_timeout JIFFY_1_LO
-			DONE
-		
-		write_overflow:
-			sto_0: set_timeout JIFFY_0_LO
-			DONE
-	
 	normal_bit:
-		bst data, 7
-		lsl data
-		; Small 2ish opcode saving
-		brts sto_1
-		rjmp sto_0
+	brts bit_1
+	bit_0:
+		set_timeout JIFFY_0_LO
+		DONE
+	
+	bit_1:
+		set_timeout JIFFY_1_LO
+		DONE
+	
+	cec_overflow:
+		rjmp ignore_rest
