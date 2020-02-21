@@ -4,7 +4,8 @@
  * File holding subroutines which are common between the CEC and
  *  i2c protocol implementations.
  *
- * For now, that's just 
+ * Doc format:
+ *  func_name(depends): clobbers
 **/
 
 /**
@@ -17,10 +18,10 @@
  * Clobber: ndata
 **/
 push_bit:
-	lsl data ; data <<= 1
-	bld data, 0
+	lsl data // data <<= 1
+	bld data, 0 // data[bit 0] = T
 	dec nbits
-	ret ; Z flag preserved, can be used after return
+	ret // Z flag preserved, can be used after return
 
 /**
  * push_byte(Z, data): Z, it, length
@@ -46,15 +47,15 @@ push_byte:
  *  boundaries and setting Z=1 when further reads will
  *  overflow
 **/
-get_next_bit:
+next_bit:
 	bst data, 7
-	lsl data ; data <<= 1
-	; if(--nbits == 0)
+	lsl data // data <<= 1
+	// if(--nbits == 0)
 	dec nbits
 	brne next_bit_done
 		ldi nbits, 8
 		ld data, it+
-		; if(it >= message + length)
+		// if(it >= message + length)
 		ldi tmp, message
 		add tmp, length
 		cp it_lo, tmp

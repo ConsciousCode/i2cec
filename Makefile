@@ -1,21 +1,36 @@
 CC = avr-gcc
+OBJCPY = avr-objcopy
 MCU = attiny10
-CFLAGS = -std=c++11 -Os -g
+avrType = t10
+prog = usbasp
+SRC = main
+CFLAGS = -std=c++11 -Os
 CFLAGS += -nostartfiles -nodefaultlibs -ffreestanding
-FILES = init.S main.cpp
 
-default: clean bridge
-.PHONY: default
+.PHONY: clean help hex object program default size
+default: clean object hex size
 
-bridge:
-	$(CC) -mmcu=$(MCU) $(CFLAGS) $(FILES) -o $@
+help:
+	@echo 'clean	Clean up object files' \
+    @echo 'help		Show this text.' \
+    @echo 'hex		Create all hex files for flash, eeprom and fuses.' \
+    @echo 'object	Create $(SRC).o' \
+    @echo 'program	Do all programming to controller
 
-asm:
-	$(CC) -mmcu=$(MCU) $(CFLAGS) main.S -o $@
 
-debug: clean
-	$(CC) -mmcu=$(MCU) $(CFLAGS) -c main.S -o $@
+size:
+	avr-size $(SRC).o
+
+object: $(SRC).o
+%.o: %.S
+	$(CC) -mmcu=$(MCU) $(CFLAGS) $^ -o $@
+
+hex: $(SRC).hex
+%.hex: %.o
+	$(OBJCPY) -j .text -j .data -O ihex $^ $@
+
+program:
+	avrdude -p$(avrType) -c$(prog) -v -U flash:w:$(SRC).hex
 
 clean:
-	rm -f *.o asm
-.PHONY: clean
+	rm -f *.o *.hex
