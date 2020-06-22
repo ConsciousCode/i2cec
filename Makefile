@@ -3,43 +3,38 @@ OBJCPY = avr-objcopy
 MCU = attiny10
 avrType = t10
 prog = usbasp
-NAME = i2cec
-CFLAGS = -std=c++11 -Os
-CFLAGS += -nostartfiles -nodefaultlibs -ffreestanding -mmcu=$(MCU)
+CFLAGS = -g
+
+#CFLAGS = -mmcu=$(MCU) -maccumulate-args -mrelax -msp8 -mtiny-stack
+#CFLAGS += -ffixed-20 -ffixed-21 -ffixed-23 -Os -g -fdata-sections
+#CFLAGS += -nostartfiles -nodefaultlibs -ffreestanding -finline
+#CFLAGS += -std=c++17
 
 .PHONY: clean help hex program default size
-default: clean object hex size
-
-debug: clean
-	$(CC) $(DFLAGS) $(SRC).S -o $@
-
+default: clean size
 help:
 	@echo 'clean	Clean up object files' \
 	@echo 'help		Show this text.' \
 	@echo 'hex		Create all hex files for flash, eeprom and fuses.' \
-	@echo 'object	Make $(NAME).o' \
 	@echo 'program	Do all programming to controller'
 
-size: $(NAME).o
+size: i2cec.hex
 	avr-size $^
 .PHONY: size
 
-$(NAME).o: head.S main.cpp
+i2cec: main.S
 	$(CC) $(CFLAGS) $^ -o $@
 
-object: $(NAME).o
-.PHONY: object
+i2cec.hex: i2cec
+	$(OBJCPY) -j .vectors -j .text -O ihex $^ $@
 
-%.hex: %.o
-	$(OBJCPY) -j .text -j .data -O ihex $^ $@
-
-hex: $(NAME).hex
+hex: i2cec.hex
 .PHONY: hex
 
-program: i2cec.hex
-	avrdude -p$(avrType) -c$(prog) -v -U flash:w:$^
+program: hex
+	avrdude -p$(avrType) -c$(prog) -v -U flash:w:i2cec.hex
 .PHONY: program
 
 clean:
-	rm -f *.o *.hex
+	rm -f *.o *.hex i2cec
 .PHONY: clean

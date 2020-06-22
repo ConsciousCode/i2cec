@@ -1,5 +1,16 @@
 Document to help keep track of the various FSM state transitions.
 
+Init
+Sleep loop
+ * i2c
+   - i2c interrupt (STOP)
+ * cec
+   - start timeout timer
+   - delay(start_sample)
+   - expect cec interrupt for next bit
+Process command
+Goto sleep loop
+
 Dev id:
 * WHO,r reads DEV_ID (0x74) -> state = DEVID,r
 * DEVID,r reads I2C_ADDR -> state = DEVID,w
