@@ -1,8 +1,11 @@
 /**
  * Macro definitions for the timing of the CEC bus
 **/
+#ifndef TIMING_H
+#define TIMING_H
 
 #define F_CPU 8000000 // ticks/second
+#define PRESCALE 64 // Prescaling for timer ticks
 
 // Times are in microseconds
 #define TIME_1_LO 600 // Low time of CEC 1 bit
@@ -12,7 +15,8 @@
 #define TIME_START_LO 3700 // CEC START low component
 #define TIME_START_HI 800 // CEC START high component 
 
-#define JIFFY (F_CPU/1000000) // Jiffy = ticks/us
+// Note: Parens avoid a cpp overflow bug and int precision loss
+#define JIFFY (F_CPU/1000000)/PRESCALE // Jiffy = ticks/us
 
 // Measured in ticks
 #define TICKS_BIT (TIME_BIT*JIFFY)
@@ -32,3 +36,5 @@
 // How many ticks to wait before sampling
 //  (By this point, 1's LO is done but 0's isn't)
 #define TICKS_SAMP (TICKS_1_LO + TICKS_0_LO)/2
+
+#endif
